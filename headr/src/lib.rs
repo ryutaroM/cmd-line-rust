@@ -1,5 +1,9 @@
 use clap::{App, Arg};
-use std::error::Error;
+use std::{
+    error::Error,
+    fs::File,
+    io::{self, stdout, BufRead, BufReader, Read, Write},
+};
 
 type MyResult<T> = Result<T, Box<dyn Error>>;
 
@@ -23,17 +27,19 @@ pub fn get_args() -> MyResult<Config> {
                 .default_value("-"),
         )
         .arg(
-            Arg::with_name("LINES")
+            Arg::with_name("lines")
                 .short("n")
                 .long("lines")
+                .value_name("LINES")
                 .help("Print specified first lines")
                 .default_value("10")
                 .takes_value(true),
         )
         .arg(
-            Arg::with_name("BYTES")
+            Arg::with_name("bytes")
                 .short("c")
                 .long("bytes")
+                .value_name("BYTES")
                 .help("Print specified first bytes")
                 .conflicts_with("lines")
                 .takes_value(true),
@@ -65,8 +71,62 @@ pub fn get_args() -> MyResult<Config> {
     })
 }
 
+fn open(f: &str) -> MyResult<Box<dyn BufRead>> {
+    match f {
+        "-" => Ok(Box::new(BufReader::new(io::stdin()))),
+        _ => Ok(Box::new(BufReader::new(File::open(f)?))),
+    }
+}
+
 pub fn run(config: Config) -> MyResult<()> {
-    println!("{:#?}", config);
+    for (i, f) in config.files.iter().enumerate() {
+        match open(&f) {
+            Err(err) => eprintln!("{}: {}", f, err),
+            Ok(mut handle) => {
+                if config.bytes.is_some() {
+                    let mut inc = 1;
+                    let mut collect_bytes: Vec<u8> = vec![];
+                    if i > 0 {
+                        println!();
+                    }
+                    if config.files.len() > 1 {
+                        println!("==> {} <==", &f);
+                    }
+
+                    for b in handle.bytes() {
+                        inc += 1;
+                        collect_bytes.push(b?);
+                        if inc > config.bytes.unwrap() {
+                            break;
+                        }
+                    }
+                    write!(
+                        stdout(),
+                        "{}",
+                        String::from_utf8_lossy(collect_bytes.as_slice()).to_string()
+                    )?;
+                } else if config.lines > 0 {
+                    if i > 0 {
+                        println!();
+                    }
+                    if config.files.len() > 1 {
+                        println!("==> {} <==", &f);
+                    }
+
+                    let mut loops = 0;
+                    loop {
+                        loops += 1;
+                        let mut buf = String::new();
+                        let result = handle.read_line(&mut buf);
+                        if result? == 0 || loops > config.lines {
+                            break;
+                        }
+                        print!("{}", buf);
+                    }
+                }
+            }
+        }
+    }
     Ok(())
 }
 
